@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MsgDeDup — Message Deduplication Service</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b12;
+    --surface: #0d1117;
+    --surface2: #161b24;
+    --border: #1e2733;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --green: #00ff88;
+    --red: #ff4466;
+    --yellow: #ffd600;
+    --text: #e2e8f0;
+    --muted: #5a6a7e;
+    --font-display: 'Syne', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-mono);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid noise overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  .glow-orb {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(120px);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .glow-orb.one { width: 600px; height: 600px; top: -200px; left: -100px; background: rgba(124,58,237,0.12); }
+  .glow-orb.two { width: 400px; height: 400px; bottom: -100px; right: -50px; background: rgba(0,229,255,0.08); }
+
+  .container {
+    position: relative; z-index: 1;
+    max-width: 1300px; margin: 0 auto; padding: 0 24px;
+  }
+
+  /* ─── HEADER ─── */
+  header {
+    padding: 32px 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+  .header-inner {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .logo-icon {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+  .logo-text h1 {
+    font-family: var(--font-display);
+    font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .logo-text p { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+  .status-bar {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(0,255,136,0.08);
+    border: 1px solid rgba(0,255,136,0.2);
+    border-radius: 100px; padding: 6px 16px;
+    font-size: 12px; color: var(--green);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+
+  
+  .stats-row {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+    margin-bottom: 32px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+    position: relative; overflow: hidden;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+  .stat-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .stat-card::after {
+    content: ''; position: absolute; top: 0; right: 0;
+    width: 60px; height: 60px;
+    background: radial-gradient(circle, var(--card-color, var(--accent)) 0%, transparent 70%);
+    opacity: 0.12; border-radius: 0 14px 0 60px;
+  }
+  .stat-card.c1 { --card-color: var(--accent); }
+  .stat-card.c2 { --card-color: var(--green); }
+  .stat-card.c3 { --card-color: var(--red); }
+  .stat-card.c4 { --card-color: var(--yellow); }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
+  .stat-value {
+    font-family: var(--font-display); font-size: 38px; font-weight: 800;
+    line-height: 1; transition: all 0.4s;
+  }
+  .stat-card.c1 .stat-value { color: var(--accent); }
+  .stat-card.c2 .stat-value { color: var(--green); }
+  .stat-card.c3 .stat-value { color: var(--red); }
+  .stat-card.c4 .stat-value { color: var(--yellow); }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+  
+  .main-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px;
+  }
+  @media(max-width:900px) { .main-grid { grid-template-columns: 1fr; } .stats-row { grid-template-columns: repeat(2,1fr); } }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px; overflow: hidden;
+  }
+  .panel-header {
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-title {
+    font-family: var(--font-display); font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .panel-title .badge {
+    font-size: 10px; font-weight: 600; font-family: var(--font-mono);
+    padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .badge-cyan { background: rgba(0,229,255,0.15); color: var(--accent); border: 1px solid rgba(0,229,255,0.3); }
+  .badge-purple { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+  .badge-green { background: rgba(0,255,136,0.1); color: var(--green); border: 1px solid rgba(0,255,136,0.25); }
+  .badge-red { background: rgba(255,68,102,0.1); color: var(--red); border: 1px solid rgba(255,68,102,0.25); }
+
+  
+  .input-area { padding: 22px; }
+  .field-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+
+  textarea {
+    width: 100%; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-family: var(--font-mono); font-size: 13px;
+    padding: 14px; resize: none; height: 110px;
+    transition: border-color 0.2s;
+    outline: none;
+  }
+  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,229,255,0.08); }
+
+  .hash-preview {
+    margin-top: 12px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .hash-preview .hash-label { font-size: 10px; color: var(--muted); text-transform: uppercase; white-space: nowrap; }
+  .hash-preview .hash-val { font-size: 11px; color: var(--accent); word-break: break-all; opacity: 0.85; }
+
+  .btn-row { display: flex; gap: 10px; margin-top: 14px; }
+  .btn {
+    border: none; border-radius: 8px; padding: 10px 20px;
+    font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 8px;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    color: #fff; flex: 1;
+  }
+  .btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+  .btn-secondary {
+    background: var(--surface2); color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger {
+    background: rgba(255,68,102,0.1); color: var(--red);
+    border: 1px solid rgba(255,68,102,0.25);
+  }
+  .btn-danger:hover { background: rgba(255,68,102,0.2); }
+
+ 
+  .response-box {
+    margin-top: 14px; padding: 14px;
+    border-radius: 10px; font-size: 12px; line-height: 1.7;
+    display: none; animation: fadeIn 0.3s ease;
+  }
+  .response-box.accepted { background: rgba(0,255,136,0.07); border: 1px solid rgba(0,255,136,0.25); color: var(--green); }
+  .response-box.duplicate { background: rgba(255,68,102,0.07); border: 1px solid rgba(255,68,102,0.25); color: var(--red); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+  
+  .quick-btns { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 22px 22px; }
+  .quick-btn {
+    font-size: 11px; padding: 5px 12px; border-radius: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer; transition: all 0.2s; font-family: var(--font-mono);
+  }
+  .quick-btn:hover { border-color: var(--accent2); color: var(--text); }
+
+  
+  .log-area { padding: 0; max-height: 360px; overflow-y: auto; }
+  .log-area::-webkit-scrollbar { width: 4px; }
+  .log-area::-webkit-scrollbar-track { background: transparent; }
+  .log-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .log-entry {
+    padding: 12px 22px;
+    border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 12px; align-items: start;
+    animation: slideIn 0.25s ease;
+    font-size: 12px;
+  }
+  @keyframes slideIn { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:none} }
+  .log-entry:last-child { border-bottom: none; }
+  .log-status { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
+  .status-accepted { background: rgba(0,255,136,0.1); color: var(--green); border: 1px solid rgba(0,255,136,0.25); }
+  .status-duplicate { background: rgba(255,68,102,0.1); color: var(--red); border: 1px solid rgba(255,68,102,0.25); }
+  .log-msg { color: var(--text); word-break: break-word; line-height: 1.5; }
+  .log-hash { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .log-time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+  
+  .table-area { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { padding: 11px 18px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; }
+  td { padding: 11px 18px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .msg-text { max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hash-short { font-family: var(--font-mono); color: var(--accent); font-size: 11px; }
+  .count-badge { background: rgba(124,58,237,0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); padding: 2px 8px; border-radius: 4px; font-size: 10px; }
+
+  
+  .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  @media(max-width:900px) { .bottom-grid { grid-template-columns: 1fr; } }
+
+  
+  .flow-area { padding: 24px; }
+  .flow-step {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 10px;
+    padding: 12px 14px; border-radius: 10px; background: var(--surface2);
+    border: 1px solid var(--border); transition: all 0.3s;
+  }
+  .flow-step.active { border-color: var(--accent); box-shadow: 0 0 16px rgba(0,229,255,0.1); }
+  .flow-step.active-dup { border-color: var(--red); box-shadow: 0 0 16px rgba(255,68,102,0.1); }
+  .step-num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; flex-shrink: 0;
+    background: var(--border); color: var(--muted); transition: all 0.3s;
+  }
+  .flow-step.active .step-num { background: var(--accent); color: var(--bg); }
+  .flow-step.active-dup .step-num { background: var(--red); color: #fff; }
+  .step-info { flex: 1; }
+  .step-title { font-size: 12px; font-weight: 600; color: var(--text); }
+  .step-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .arrow { text-align: center; color: var(--muted); font-size: 16px; margin: 4px 0; }
+
+  
+  .api-area { padding: 20px 22px; }
+  .endpoint {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    transition: border-color 0.2s;
+  }
+  .endpoint:hover { border-color: var(--accent); }
+  .method { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; }
+  .method.post { background: rgba(0,229,255,0.1); color: var(--accent); }
+  .method.get { background: rgba(0,255,136,0.1); color: var(--green); }
+  .method.del { background: rgba(255,68,102,0.1); color: var(--red); }
+  .ep-path { font-size: 12px; color: var(--text); }
+  .ep-desc { font-size: 11px; color: var(--muted); margin-left: auto; }
+
+ 
+  footer {
+    border-top: 1px solid var(--border); padding: 20px 0;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--muted); flex-wrap: wrap; gap: 12px;
+  }
+  .tech-tags { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tech-tag {
+    padding: 3px 10px; border-radius: 4px; font-size: 10px;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+  }
+
+  .empty-state { padding: 40px; text-align: center; color: var(--muted); font-size: 12px; }
+  .empty-state .icon { font-size: 32px; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<div class="glow-orb one"></div>
+<div class="glow-orb two"></div>
+
+<div class="container">
+  
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">🔍</div>
+        <div class="logo-text">
+          <h1>MsgDeDup</h1>
+          <p>Message Deduplication Service — v1.0.0</p>
+        </div>
+      </div>
+      <div class="status-bar">
+        <div class="dot"></div>
+        Service Online
+      </div>
+    </div>
+  </header>
+
+  
+  <div class="stats-row">
+    <div class="stat-card c1">
+      <div class="stat-label">Total Received</div>
+      <div class="stat-value" id="stat-total">0</div>
+      <div class="stat-sub">Messages submitted</div>
+    </div>
+    <div class="stat-card c2">
+      <div class="stat-label">Unique Stored</div>
+      <div class="stat-value" id="stat-unique">0</div>
+      <div class="stat-sub">In database</div>
+    </div>
+    <div class="stat-card c3">
+      <div class="stat-label">Duplicates</div>
+      <div class="stat-value" id="stat-dups">0</div>
+      <div class="stat-sub">Blocked & ignored</div>
+    </div>
+    <div class="stat-card c4">
+      <div class="stat-label">Dedup Rate</div>
+      <div class="stat-value" id="stat-rate">0%</div>
+      <div class="stat-sub">Efficiency score</div>
+    </div>
+  </div>
+
+
+  <div class="main-grid">
+    <!-- LEFT: Submit Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          📨 Submit Message
+          <span class="badge badge-cyan">POST /api/messages</span>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="field-label">Message Content</div>
+        <textarea id="msgInput" placeholder="Type your message here...&#10;Try submitting the same message twice to see deduplication in action."></textarea>
+        <div class="hash-preview">
+          <div class="hash-label">SHA-256</div>
+          <div class="hash-val" id="hashPreview">— type to generate hash preview —</div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="submitMessage()">▶ Submit Message</button>
+          <button class="btn btn-secondary" onclick="clearInput()">✕ Clear</button>
+        </div>
+        <div class="response-box" id="responseBox"></div>
+      </div>
+      <div class="panel-header" style="border-top:1px solid var(--border)">
+        <div class="panel-title">⚡ Quick Test Messages</div>
+      </div>
+      <div class="quick-btns">
+        <div class="quick-btn" onclick="setMsg('Order #12345 placed successfully')">Order #12345</div>
+        <div class="quick-btn" onclick="setMsg('Payment of $99.00 received')">Payment $99</div>
+        <div class="quick-btn" onclick="setMsg('User login: admin@example.com')">User Login</div>
+        <div class="quick-btn" onclick="setMsg('Server health check OK')">Health Check</div>
+        <div class="quick-btn" onclick="setMsg('Email notification sent to user@mail.com')">Email Notif</div>
+        <div class="quick-btn" onclick="setMsg('Webhook received from Stripe: evt_1234')">Webhook</div>
+        <div class="quick-btn" onclick="setMsg('Cache invalidated for key: user_session')">Cache Bust</div>
+        <div class="quick-btn" onclick="setMsg('File upload completed: report.pdf')">File Upload</div>
+      </div>
+    </div>
+
+    
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          📋 Activity Log
+          <span class="badge badge-purple">Live Feed</span>
+        </div>
+        <button class="btn btn-danger" style="padding:5px 12px;font-size:11px" onclick="clearAll()">🗑 Clear All</button>
+      </div>
+      <div class="log-area" id="logArea">
+        <div class="empty-state">
+          <div class="icon">📭</div>
+          No messages yet. Submit one above!
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+  <div class="bottom-grid">
+    <!-- Unique Messages Table -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          🗄 Unique Message Store
+          <span class="badge badge-green">MongoDB Collection</span>
+        </div>
+      </div>
+      <div class="table-area" style="max-height:340px;overflow-y:auto">
+        <table id="msgTable">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Message</th>
+              <th>SHA-256 Hash</th>
+              <th>Count</th>
+              <th>Stored At</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="5"><div class="empty-state" style="padding:30px"><div class="icon">📂</div>No unique messages stored yet.</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    
+    <div style="display:flex;flex-direction:column;gap:24px">
+      <!-- Processing Flow -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">⚙️ Processing Flow</div>
+        </div>
+        <div class="flow-area" id="flowArea">
+          <div class="flow-step" id="step1">
+            <div class="step-num">1</div>
+            <div class="step-info">
+              <div class="step-title">Message Received</div>
+              <div class="step-desc">POST /api/messages via REST API</div>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="flow-step" id="step2">
+            <div class="step-num">2</div>
+            <div class="step-info">
+              <div class="step-title">SHA-256 Hash Generated</div>
+              <div class="step-desc">Unique fingerprint for message content</div>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="flow-step" id="step3">
+            <div class="step-num">3</div>
+            <div class="step-info">
+              <div class="step-title">Hash Lookup in MongoDB</div>
+              <div class="step-desc">Indexed fast lookup by hash key</div>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="flow-step" id="step4">
+            <div class="step-num">4</div>
+            <div class="step-info">
+              <div class="step-title">Decision: Accept or Reject</div>
+              <div class="step-desc" id="step4desc">New → Store & return 201 · Dup → Return 200</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+     
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">🔌 API Reference</div>
+        </div>
+        <div class="api-area">
+          <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="ep-path">/api/messages</span>
+            <span class="ep-desc">Submit message</span>
+          </div>
+          <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="ep-path">/api/messages</span>
+            <span class="ep-desc">List unique msgs</span>
+          </div>
+          <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="ep-path">/api/messages/log</span>
+            <span class="ep-desc">Activity log</span>
+          </div>
+          <div class="endpoint">
+            <span class="method get">GET</span>
+            <span class="ep-path">/api/stats</span>
+            <span class="ep-desc">Get statistics</span>
+          </div>
+          <div class="endpoint">
+            <span class="method post">POST</span>
+            <span class="ep-path">/api/hash</span>
+            <span class="ep-desc">Hash a message</span>
+          </div>
+          <div class="endpoint">
+            <span class="method del">DEL</span>
+            <span class="ep-path">/api/messages</span>
+            <span class="ep-desc">Clear all data</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+  <footer>
+    <span>MsgDeDup © 2025 — Message Deduplication Service</span>
+    <div class="tech-tags">
+      <span class="tech-tag">Node.js</span>
+      <span class="tech-tag">Express.js</span>
+      <span class="tech-tag">MongoDB</span>
+      <span class="tech-tag">SHA-256</span>
+      <span class="tech-tag">REST API</span>
+      <span class="tech-tag">Postman</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+
+const messageStore = new Map();
+const activityLog = [];
+let totalReceived = 0, totalDuplicates = 0, idCounter = 1;
+
+
+async function sha256(message) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+
+const msgInput = document.getElementById('msgInput');
+msgInput.addEventListener('input', async () => {
+  const val = msgInput.value.trim();
+  const el = document.getElementById('hashPreview');
+  if (!val) { el.textContent = '— type to generate hash preview —'; return; }
+  const h = await sha256(val);
+  el.textContent = h;
+});
+
+function setMsg(text) { msgInput.value = text; msgInput.dispatchEvent(new Event('input')); }
+function clearInput() { msgInput.value = ''; document.getElementById('hashPreview').textContent = '— type to generate hash preview —'; hideResponse(); }
+
+
+async function submitMessage() {
+  const raw = msgInput.value.trim();
+  if (!raw) { showResponse('Please enter a message.', 'duplicate'); return; }
+
+  const hash = await sha256(raw);
+  totalReceived++;
+  animateFlow();
+
+  if (messageStore.has(hash)) {
+    // DUPLICATE
+    const existing = messageStore.get(hash);
+    existing.count++;
+    existing.lastSeen = new Date().toISOString();
+    totalDuplicates++;
+
+    const entry = { id: idCounter++, message: raw, hash, status: 'DUPLICATE', timestamp: new Date().toISOString() };
+    activityLog.unshift(entry);
+
+    showResponse(`🔁 DUPLICATE DETECTED\nHash: ${hash.slice(0,16)}...\nOriginal stored: ${formatTime(existing.timestamp)}\nOccurrences: ${existing.count}`, 'duplicate');
+    animateFlowDup();
+  } else {
+    // ACCEPTED
+    const entry = { id: idCounter, message: raw, hash, count: 1, timestamp: new Date().toISOString(), lastSeen: new Date().toISOString() };
+    messageStore.set(hash, entry);
+    activityLog.unshift({ id: idCounter++, message: raw, hash, status: 'ACCEPTED', timestamp: entry.timestamp });
+
+    showResponse(`✅ MESSAGE ACCEPTED\nHash: ${hash.slice(0,16)}...\nID: #${entry.id}\nStored at: ${formatTime(entry.timestamp)}`, 'accepted');
+    animateFlowAccept();
+  }
+
+  updateStats();
+  renderLog();
+  renderTable();
+}
+
+function showResponse(text, type) {
+  const box = document.getElementById('responseBox');
+  box.style.display = 'block';
+  box.className = `response-box ${type}`;
+  box.style.whiteSpace = 'pre';
+  box.textContent = text;
+}
+function hideResponse() { document.getElementById('responseBox').style.display = 'none'; }
+
+function clearAll() {
+  messageStore.clear(); activityLog.length = 0;
+  totalReceived = 0; totalDuplicates = 0; idCounter = 1;
+  updateStats(); renderLog(); renderTable(); hideResponse();
+}
+
+
+function updateStats() {
+  animateNum('stat-total', totalReceived);
+  animateNum('stat-unique', messageStore.size);
+  animateNum('stat-dups', totalDuplicates);
+  const rate = totalReceived > 0 ? ((totalDuplicates / totalReceived) * 100).toFixed(1) : '0.0';
+  document.getElementById('stat-rate').textContent = rate + '%';
+}
+
+function animateNum(id, val) {
+  const el = document.getElementById(id);
+  el.style.transform = 'scale(1.15)';
+  el.textContent = val;
+  setTimeout(() => el.style.transform = 'scale(1)', 200);
+}
+
+
+function renderLog() {
+  const area = document.getElementById('logArea');
+  if (!activityLog.length) {
+    area.innerHTML = '<div class="empty-state"><div class="icon">📭</div>No messages yet. Submit one above!</div>';
+    return;
+  }
+  area.innerHTML = activityLog.slice(0, 50).map(e => `
+    <div class="log-entry">
+      <span class="log-status status-${e.status.toLowerCase()}">${e.status}</span>
+      <div>
+        <div class="log-msg">${escHtml(e.message)}</div>
+        <div class="log-hash">${e.hash.slice(0,32)}…</div>
+      </div>
+      <div class="log-time">${formatTime(e.timestamp)}</div>
+    </div>
+  `).join('');
+}
+
+
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  const msgs = Array.from(messageStore.values()).sort((a,b) => new Date(b.timestamp)-new Date(a.timestamp));
+  if (!msgs.length) {
+    tbody.innerHTML = '<tr><td colspan="5"><div class="empty-state" style="padding:30px"><div class="icon">📂</div>No unique messages stored yet.</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = msgs.map(m => `
+    <tr>
+      <td style="color:var(--muted)">#${m.id}</td>
+      <td class="msg-text" title="${escHtml(m.message)}">${escHtml(m.message)}</td>
+      <td class="hash-short">${m.hash.slice(0,12)}…</td>
+      <td><span class="count-badge">${m.count}×</span></td>
+      <td style="color:var(--muted)">${formatTime(m.timestamp)}</td>
+    </tr>
+  `).join('');
+}
+
+
+let flowTimer;
+function animateFlow() {
+  resetFlow();
+  const steps = ['step1','step2','step3'];
+  steps.forEach((id, i) => {
+    setTimeout(() => document.getElementById(id).classList.add('active'), i * 300);
+  });
+}
+function animateFlowAccept() {
+  setTimeout(() => {
+    document.getElementById('step4').classList.add('active');
+    document.getElementById('step4desc').textContent = '✅ New message — stored to MongoDB, return 201';
+  }, 900);
+}
+function animateFlowDup() {
+  setTimeout(() => {
+    document.getElementById('step4').classList.add('active-dup');
+    document.getElementById('step4desc').textContent = '🔁 Duplicate found — rejected, return 200';
+  }, 900);
+}
+function resetFlow() {
+  ['step1','step2','step3','step4'].forEach(id => {
+    const el = document.getElementById(id);
+    el.classList.remove('active','active-dup');
+  });
+  document.getElementById('step4desc').textContent = 'New → Store & return 201 · Dup → Return 200';
+}
+
+
+function formatTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
